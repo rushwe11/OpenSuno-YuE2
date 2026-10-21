@@ -1,6 +1,7 @@
 """Small studio adapter around the pinned, unmodified upstream YuE2 runtime."""
 from contextlib import contextmanager
 from dataclasses import asdict, replace
+import gc
 import time
 import re
 import sys
@@ -278,6 +279,14 @@ class Pipeline(YuE2Pipeline):
                 print(f'[lora] {touched} adapted layers', flush=True)
         return super()._load_model(for_nar)
 
+    def close(self):
+        """Release unified-memory allocations before another LoRA/model key loads."""
+        super().close()
+        gc.collect()
+        if torch.backends.mps.is_available():
+            torch.mps.synchronize()
+            torch.mps.empty_cache()
+
     @contextmanager
     def _status(self, label, *, total=None, unit=None):
         owner = self
@@ -331,6 +340,10 @@ def run(root, jobdir, r, cache, report, cancel, save_meta, style, lyrics, start,
         for old in list(cache.values()):
             if isinstance(old, Pipeline): old.close()
         for k in [k for k, v in cache.items() if isinstance(v, Pipeline)]: del cache[k]
+        gc.collect()
+        if torch.backends.mps.is_available():
+            torch.mps.synchronize()
+            torch.mps.empty_cache()
         pipe = cache[key] = Pipeline(root, variant, report, cancel, lora=lora, drop_ar_file=drop_ar_file or None, planner=planner)
     pipe.report, pipe.cancel = report, cancel
     if r.get('_preload'):

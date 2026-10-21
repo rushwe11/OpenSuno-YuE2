@@ -171,6 +171,14 @@ tokens are immediately eligible for re-rendering and Extend:
   --library library
 ```
 
+When the OpenSuno checkout is inside the existing YuE2 project, the dedicated
+launcher performs that import idempotently and starts on port 7864 so an older
+studio can remain on 7862:
+
+```bash
+open "scripts/Launch Existing YuE2.command"
+```
+
 Allow at least 20 GB of free disk space for weights and Python environments. Tested on an M4 Pro
 with 64 GB and on an RTX 4070 Ti SUPER 16 GB; other hardware has not been benchmarked here.
 

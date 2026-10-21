@@ -27,7 +27,7 @@ import uploaded_songs
 from analysis_cache import AnalysisCache, TokenCache
 from workspaces import Workspaces, WorkspaceError
 from prompts import Prompts, PromptError
-from model_registry import available_models, default_model, is_cuda
+from model_registry import available_models, default_model, is_cuda, is_upstream_torch
 import hardware
 import render_client
 from render_client import RenderNode, RenderNodeError
@@ -144,7 +144,7 @@ class Job(BaseModel):
     origin:dict|None=None
     background_analysis:bool=False
     kind:Literal['generate','cover','transcribe','tokenize','plan']='generate'
-    model:Literal['bf16','cuda-bf16','cuda-fp8']=default_model()
+    model:Literal['bf16','mps-pytorch','cuda-bf16','cuda-fp8']=default_model()
     candidates:int=Field(default=1,ge=1,le=8)
     title:str=Field(default='Untitled song',max_length=100)
     style:str=Field(default='',max_length=6000)
@@ -190,8 +190,8 @@ class Job(BaseModel):
     @model_validator(mode='after')
     def valid(self):
         if self.background_analysis and self.kind not in ANALYSIS_KINDS: raise ValueError('Background analysis must be a recording analysis job')
-        if is_cuda(self.model) and self.kind not in ANALYSIS_KINDS and max(self.abc_sampling.penalty_window,self.semantic_sampling.penalty_window)>100:
-            raise ValueError('The official CUDA runtime supports Lookback up to 100 tokens. Lower Lookback or select an MLX model.')
+        if is_upstream_torch(self.model) and self.kind not in ANALYSIS_KINDS and max(self.abc_sampling.penalty_window,self.semantic_sampling.penalty_window)>100:
+            raise ValueError('The official PyTorch runtime supports Lookback up to 100 tokens. Lower Lookback or select an MLX model.')
         if self.kind in {'generate','cover','plan'}:
             if not self.style.strip() or (not self.instrumental and not self.lyrics.strip()): raise ValueError('Enter a style and lyrics, or enable Instrumental only')
             if self.abc.strip() and self.cot=='off': raise ValueError('A supplied score needs Melody or Melody + chords mode')
@@ -420,7 +420,7 @@ def set_render_node(s:RenderNodeSettings):
         return remote.describe()
 
 @app.post('/api/models/preload')
-def preload_model(model:Literal['bf16','cuda-bf16','cuda-fp8','analysis']='bf16'):
+def preload_model(model:Literal['bf16','mps-pytorch','cuda-bf16','cuda-fp8','analysis']='bf16'):
     if HOSTED: return {'status':'ready'}
     if remote.configured(): return {'status':'ready','detail':'Loaded by the render node when a song starts'}
     with lock:

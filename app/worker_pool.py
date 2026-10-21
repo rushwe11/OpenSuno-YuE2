@@ -7,8 +7,8 @@ import threading
 import time
 import uuid
 import sys
-from model_registry import is_cuda
-from runtime_platform import environment_python, stop_process
+from model_registry import is_cuda, is_external_mps, is_upstream_torch
+from runtime_platform import environment_python, external_yue2_python, stop_process
 
 class WorkerPool:
     def __init__(self, root):
@@ -17,7 +17,14 @@ class WorkerPool:
 
     def submit(self, jobdir, analyze):
         request = json.loads((jobdir / 'request.json').read_text())
-        key = request['model'] if not analyze and is_cuda(request.get('model')) else analyze
+        key = request['model'] if not analyze and is_upstream_torch(request.get('model')) else analyze
+        # A 16 GB Apple machine cannot safely retain both MLX and PyTorch copies
+        # of YuE2. Release the other music backend when switching between them.
+        if not analyze and (is_external_mps(request.get('model')) or 'mps-pytorch' in self.workers):
+            for old_key, old in list(self.workers.items()):
+                if old_key is not True and old_key != key:
+                    self.discard(old)
+                    old.wait(timeout=15)
         if sys.platform == 'win32':
             for old_key, old in list(self.workers.items()):
                 if old_key != key:
@@ -25,7 +32,8 @@ class WorkerPool:
                     old.wait(timeout=15)
         proc = self.workers.get(key)
         if proc is None or proc.poll() is not None:
-            python = environment_python(self.root, analyze, environment='.cuda-venv' if is_cuda(key) else None)
+            python = (external_yue2_python(self.root) if is_external_mps(key)
+                      else environment_python(self.root, analyze, environment='.cuda-venv' if is_cuda(key) else None))
             env = {**os.environ, 'PYTHONUNBUFFERED': '1', 'PYTORCH_ENABLE_MPS_FALLBACK': '1',
                    'HF_HUB_OFFLINE': '1', 'TRANSFORMERS_OFFLINE': '1',
                    'YUE2_PARENT_PID': str(os.getpid()), 'PYTHONUTF8': '1'}

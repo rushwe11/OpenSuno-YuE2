@@ -36,6 +36,24 @@ def environment_python(root, analyze=False, environment=None):
     return Path(root) / environment / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
 
 
+def external_yue2_root(root):
+    """Existing official YuE2 project used by the optional PyTorch-MPS backend."""
+    configured = os.environ.get('OPENSUNO_YUE2_ROOT', '').strip()
+    candidates = [Path(configured).expanduser()] if configured else []
+    candidates.append(Path(root).resolve().parent)
+    for candidate in candidates:
+        if ((candidate / '.venv/bin/python').is_file()
+                and (candidate / 'models/YuE2-3B/model.safetensors').is_file()
+                and (candidate / 'models/YuE2-Vae/model.safetensors').is_file()):
+            return candidate.resolve()
+    return None
+
+
+def external_yue2_python(root):
+    project = external_yue2_root(root)
+    return project / '.venv/bin/python' if project else Path()
+
+
 def stop_process(proc, force=False):
     if proc.poll() is not None:
         return

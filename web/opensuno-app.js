@@ -36,8 +36,8 @@ async function prepareModels(retry=false){
  if(!config||config.hosted||preloadBusy||active)return;
  preloadBusy=true;
  try{
-  const targets=config.default_model==='cuda-bf16'?[$('model').value]:(mode==='cover'?['analysis','bf16']:['bf16']);
-  if(config.default_model!=='cuda-bf16'&&$('model').value!=='bf16')targets.push($('model').value);
+  const selectedModel=$('model').value||config.default_model;
+  const targets=mode==='cover'?['analysis',selectedModel]:[selectedModel];
   for(const model of targets){
    const ready=model==='analysis'?config.transcriber_ready:config.models.find(m=>m.id===model)?.ready;
    if(!ready||['ready','loading'].includes(config.preloads?.[model]?.status)||(!retry&&config.preloads?.[model]?.status==='failed'))continue;
@@ -293,7 +293,7 @@ function queuePosition(id){const i=(config?.queue||[]).indexOf(id);return i<0?0:
 function ordinal(n){return n+(n%10===1&&n%100!==11?'st':n%10===2&&n%100!==12?'nd':n%10===3&&n%100!==13?'rd':'th')}
 function generationModelLabel(model){
  const id=model?.id||model;
- return {bf16:'YuE2 BF16','8bit':'YuE2 8-bit','cuda-bf16':'YuE2 CUDA BF16','cuda-fp8':'YuE2 CUDA FP8'}[id]||model?.label||id||'YuE2';
+ return {bf16:'YuE2 BF16','mps-pytorch':'Existing YuE2 MPS','8bit':'YuE2 8-bit','cuda-bf16':'YuE2 CUDA BF16','cuda-fp8':'YuE2 CUDA FP8'}[id]||model?.label||id||'YuE2';
 }
 function applyHostedMode(){
  if(!config?.hosted)return;

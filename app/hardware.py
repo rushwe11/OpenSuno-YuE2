@@ -7,8 +7,8 @@ import subprocess
 import sys
 
 import loras
-from model_registry import available_models, default_model, is_cuda
-from runtime_platform import environment_python
+from model_registry import available_models, default_model, is_cuda, is_external_mps
+from runtime_platform import environment_python, external_yue2_root
 
 
 def detect_gpu():
@@ -46,7 +46,7 @@ def mlx_environment_ready():
 
 def render_environment_ready(root):
     """Can this machine render at all, or does it only run the interface for a render node?"""
-    return mlx_environment_ready() or cuda_environment_ready(root)
+    return mlx_environment_ready() or cuda_environment_ready(root) or external_yue2_root(root) is not None
 
 
 def is_notice(path):
@@ -60,6 +60,8 @@ def model_ready(root, downloads, name):
         # Licence texts and manifests ship with the weights but the engine never reads them; they do not gate readiness.
         needed = [a for a in downloads.selected_assets(name) if not is_notice(a['path'])]
         return bool(needed) and all(downloads.present(a) for a in needed) and cuda_environment_ready(root)
+    if is_external_mps(name):
+        return sys.platform == 'darwin' and platform.machine() == 'arm64' and external_yue2_root(root) is not None
     needed = [a for a in downloads.assets if a['path'].startswith('model/' + name + '/') or a['path'] in {'model/8bit/vae.safetensors', 'model/8bit/qwen.tiktoken'}]
     return mlx_environment_ready() and all(downloads.present(a) for a in needed) and all((root / 'model' / name / f).is_file() for f in ['vae.safetensors', 'qwen.tiktoken', 'config.json', 'vae_config.json', 'yue2_generation_config.json'])
 
@@ -77,11 +79,15 @@ def capabilities(root, downloads, gpu=None):
     """Everything a Studio needs to know before sending work here."""
     gpu = gpu or detect_gpu()
     analysis_env = environment_python(root, True).is_file()
+    offered = models(root, downloads, gpu)
+    preferred = default_model()
+    if not any(model['id'] == preferred and model['ready'] for model in offered):
+        preferred = next((model['id'] for model in offered if model['ready']), preferred)
     return {
         'platform': {'system': platform.system(), 'machine': platform.machine(), 'python': platform.python_version(), 'hostname': platform.node()},
         'gpu': gpu,
-        'models': models(root, downloads, gpu),
-        'default_model': default_model(),
+        'models': offered,
+        'default_model': preferred,
         'downloads': downloads.snapshot(),
         'render_environment_ready': render_environment_ready(root),
         'transcriber_environment_ready': analysis_env,

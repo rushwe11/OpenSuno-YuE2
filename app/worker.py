@@ -167,8 +167,8 @@ elif is_analysis:
     (jobdir/'score.abc').write_text(abc)
     meta={'abc':abc,'elapsed':round(time.perf_counter()-start,2),'device':device,
           'audio_id':r['audio_id'],'melody_only':r['melody_only'],'source_seconds':r['source_seconds']}
-elif r.get('model','').startswith('cuda-'):
-    loading('Importing official YuE2 CUDA runtime')
+elif r.get('model','').startswith('cuda-') or r.get('model') == 'mps-pytorch':
+    loading('Importing official YuE2 '+('Metal / PyTorch' if r.get('model') == 'mps-pytorch' else 'CUDA')+' runtime')
     from cuda_engine import run,ScoreWriter
     from yue2.protocol import Sampling as CudaSampling
     def prepare_score(pipe,abc):

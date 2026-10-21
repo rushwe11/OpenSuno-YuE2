@@ -115,7 +115,7 @@ class RegistryTest(unittest.TestCase):
         from model_registry import default_model,available_models
         with patch('model_registry.sys.platform','darwin'):
             self.assertEqual(default_model(),'bf16')
-            self.assertEqual(set(available_models()),{'bf16'})
+            self.assertEqual(set(available_models()),{'bf16','mps-pytorch'})
 
 class PageLeaseTest(unittest.TestCase):
     def test_last_tab_and_refresh_grace(self):
@@ -146,7 +146,8 @@ class ModelCacheTest(unittest.TestCase):
         engine.synthesize=original
         mlx=types.ModuleType('mlx');mlx.__path__=[]
         core=types.ModuleType('mlx.core');mlx.core=core
-        modules={'mlx':mlx,'mlx.core':core,'numpy':types.ModuleType('numpy'),'generate':engine}
+        nn=types.ModuleType('mlx.nn');nn.Module=object;mlx.nn=nn
+        modules={'mlx':mlx,'mlx.core':core,'mlx.nn':nn,'numpy':types.ModuleType('numpy'),'generate':engine}
         with tempfile.TemporaryDirectory() as d,patch.dict(sys.modules,modules):
             for index in range(3):
                 p=Path(d)/str(index);p.mkdir()

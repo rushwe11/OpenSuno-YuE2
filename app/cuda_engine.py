@@ -1,6 +1,7 @@
 """Small studio adapter around the pinned, unmodified upstream YuE2 runtime."""
 from contextlib import contextmanager
 from dataclasses import asdict, replace
+import gc
 import time
 import re
 import sys
@@ -15,6 +16,13 @@ from yue2.pipeline import SymbolicPlan, SemanticResult, SongResult
 from yue2.protocol import SongRequest, token_prefixes, negative_prefix, ABC_START, ABC_END, CODEC_OFFSET, EOD, VOCAB_SIZE
 from yue2.storage import identity
 import song_continuation
+import audio_quality
+from runtime_platform import external_yue2_root
+from mps_sampling import install_mps_safe_sampling, mps_available
+
+
+if mps_available():
+    install_mps_safe_sampling()
 
 # Windows Torch exposes the FlashAttention operator even when it was not built.
 # Select upstream's supported cuDNN graph path instead of its operator-only auto check.
@@ -225,13 +233,24 @@ class Pipeline(YuE2Pipeline):
         self.report, self.cancel, self.root, self.lora = report, cancel, root, lora or []
         self.drop_ar_file = drop_ar_file or ''
         self.planner = planner
-        if not torch.cuda.is_available():
-            raise RuntimeError('The official model requires an NVIDIA CUDA GPU.')
-        total = torch.cuda.get_device_properties(0).total_memory / 2**30
-        super().__init__(root/'model/cuda/backbone', root/'model/cuda/vae', device='cuda',
-                         memory_budget_gib=total, vae_core_frames=512, offload_ar=True,
-                         backend='torch-eager' if variant == 'cuda-fp8' else 'torch',
-                         quantization='fp8' if variant == 'cuda-fp8' else 'none')
+        if variant == 'mps-pytorch':
+            project = external_yue2_root(root)
+            if project is None:
+                raise RuntimeError('Set OPENSUNO_YUE2_ROOT to the existing YuE2 project with its .venv and models folder.')
+            if not mps_available():
+                raise RuntimeError('The existing YuE2 backend requires Apple Metal / MPS.')
+            self.external_project = project
+            super().__init__(project/'models/YuE2-3B', project/'models/YuE2-Vae', device='mps',
+                             memory_budget_gib=10, vae_core_frames=512, offload_ar=True,
+                             backend='torch-eager', quantization='none')
+        else:
+            if not torch.cuda.is_available():
+                raise RuntimeError('The official CUDA model requires an NVIDIA GPU.')
+            total = torch.cuda.get_device_properties(0).total_memory / 2**30
+            super().__init__(root/'model/cuda/backbone', root/'model/cuda/vae', device='cuda',
+                             memory_budget_gib=total, vae_core_frames=512, offload_ar=True,
+                             backend='torch-eager' if variant == 'cuda-fp8' else 'torch',
+                             quantization='fp8' if variant == 'cuda-fp8' else 'none')
 
     def _load_model(self, for_nar=False):
         # Load the BF16 weights on the CPU and fold the chosen LoRAs in before upstream quantizes or moves them.
@@ -265,6 +284,14 @@ class Pipeline(YuE2Pipeline):
                     print('[lora] Cover: decoder half of the Writes adapter only, so the transcribed melody does not loop', flush=True)
                 print(f'[lora] {touched} adapted layers', flush=True)
         return super()._load_model(for_nar)
+
+    def close(self):
+        """Release unified-memory allocations before another LoRA/model key loads."""
+        super().close()
+        gc.collect()
+        if mps_available():
+            torch.mps.synchronize()
+            torch.mps.empty_cache()
 
     @contextmanager
     def _status(self, label, *, total=None, unit=None):
@@ -319,12 +346,16 @@ def run(root, jobdir, r, cache, report, cancel, save_meta, style, lyrics, start,
         for old in list(cache.values()):
             if isinstance(old, Pipeline): old.close()
         for k in [k for k, v in cache.items() if isinstance(v, Pipeline)]: del cache[k]
+        gc.collect()
+        if mps_available():
+            torch.mps.synchronize()
+            torch.mps.empty_cache()
         pipe = cache[key] = Pipeline(root, variant, report, cancel, lora=lora, drop_ar_file=drop_ar_file or None, planner=planner)
     pipe.report, pipe.cancel = report, cancel
     if r.get('_preload'):
         pipe._load_model()
         raise SystemExit(0)
-    torch.cuda.reset_peak_memory_stats()
+    if torch.cuda.is_available(): torch.cuda.reset_peak_memory_stats()
     pipe.generation_config = replace(pipe.generation_config, ode_steps=r['steps'])
     if prepare_score is not None:
         r['abc'] = prepare_score(pipe, r.get('abc', ''))
@@ -369,20 +400,31 @@ def run(root, jobdir, r, cache, report, cancel, save_meta, style, lyrics, start,
             if r.get('instrumental') and r['cot'] != 'off' and not settings['abc']:
                 settings['abc'], _ = write_plan(seed)
             result = pipe(**settings, semantic_sampling=Sampling(**r['semantic_sampling']))
+        audio_quality.check_and_save(destination, result.audio, write_wav)
         write_wav(destination/'audio.wav', result.audio)
         if result.abc: (destination/'score.abc').write_text(result.abc, encoding='utf-8')
         (destination/'tokens.json').write_text(json.dumps(result.semantic.tokens))
         (destination/'render-prefix.json').write_text(json.dumps(result.semantic.plan.prefix))
         settings = {**r, 'seed':seed, 'candidates':1, 'random_seed':False}
         (destination/'settings.json').write_text(json.dumps(settings,indent=2))
-        (destination/'cuda-runtime.json').write_text(json.dumps(dict(config=result.config,timing=result.timing,weights=result.weights,
-            gpu=torch.cuda.get_device_name(0),peak_allocated_gib=torch.cuda.max_memory_allocated()/2**30,
-            peak_reserved_gib=torch.cuda.max_memory_reserved()/2**30),indent=2))
+        if variant == 'mps-pytorch':
+            runtime = dict(config=result.config,timing=result.timing,weights=result.weights,
+                           gpu='Apple Metal / MPS',backend='pytorch-mps',
+                           peak_allocated_gib=round(torch.mps.driver_allocated_memory()/2**30,3))
+            (destination/'mps-runtime.json').write_text(json.dumps(runtime,indent=2))
+            peak_memory = runtime['peak_allocated_gib']
+        else:
+            runtime = dict(config=result.config,timing=result.timing,weights=result.weights,
+                           gpu=torch.cuda.get_device_name(0),backend='pytorch-cuda',
+                           peak_allocated_gib=torch.cuda.max_memory_allocated()/2**30,
+                           peak_reserved_gib=torch.cuda.max_memory_reserved()/2**30)
+            (destination/'cuda-runtime.json').write_text(json.dumps(runtime,indent=2))
+            peak_memory = round(torch.cuda.max_memory_allocated()/2**30,2)
         if count > 1: (destination/'request.json').write_text(json.dumps(settings,indent=2))
         item = dict(index=index, seed=seed, model=variant, seconds=round(len(result.audio)/48000,3),
                     elapsed=round(time.perf_counter()-tick,2), abc=result.abc,
                     prefix='' if count == 1 else f'candidate-{index:02d}/',
-                    peak_memory_gb=round(torch.cuda.max_memory_allocated()/2**30,2))
+                    peak_memory_gb=peak_memory)
         meta['candidates'].append(item)
         if count == 1: meta.update({k:v for k,v in item.items() if k not in {'index','prefix'}})
         meta['elapsed'] = round(analysis_elapsed+time.perf_counter()-start,2)

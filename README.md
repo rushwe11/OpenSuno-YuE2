@@ -144,6 +144,41 @@ Details for each are in [FEATURES.md](docs/FEATURES.md).
 
 ## Install
 
+### Reuse an existing official YuE2 PyTorch/MPS installation
+
+On Apple Silicon, a Studio checkout placed inside an existing YuE2 project can
+reuse that project's `.venv`, `models/YuE2-3B`, and `models/YuE2-Vae` without
+downloading the separate MLX checkpoint. The parent project is discovered
+automatically, or can be selected explicitly:
+
+```bash
+export OPENSUNO_YUE2_ROOT=/absolute/path/to/YuE2
+export YUE2_PORT=7864  # useful while another local studio uses 7862
+.venv/bin/python app/server.py
+```
+
+The model picker shows **Existing YuE2 MPS** when the external installation is
+ready. It uses OpenSuno's resident worker, continuation, re-rendering, and LoRA
+paths with the official PyTorch BF16 weights.
+
+Existing YuE2 Atelier runs can be imported with their prompts, scores, semantic
+tokens, exact render prefixes, latents, and provenance. Imported songs with
+tokens are immediately eligible for re-rendering and Extend:
+
+```bash
+.venv/bin/python app/import_yue2.py \
+  --source /absolute/path/to/YuE2 \
+  --library library
+```
+
+When the OpenSuno checkout is inside the existing YuE2 project, the dedicated
+launcher performs that import idempotently and starts on port 7864 so an older
+studio can remain on 7862:
+
+```bash
+open "scripts/Launch Existing YuE2.command"
+```
+
 Allow at least 20 GB of free disk space for weights and Python environments. Tested on an M4 Pro
 with 64 GB and on an RTX 4070 Ti SUPER 16 GB; other hardware has not been benchmarked here.
 

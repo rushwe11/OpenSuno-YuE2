@@ -4,6 +4,7 @@ from pathlib import Path
 from runtime_platform import replace_file
 import instrumental
 import cover_arrangement
+import audio_quality
 import vocal_register
 ROOT=Path(__file__).resolve().parents[1]
 MODEL_CACHE=globals().get('MODEL_CACHE',{})
@@ -167,8 +168,8 @@ elif is_analysis:
     (jobdir/'score.abc').write_text(abc)
     meta={'abc':abc,'elapsed':round(time.perf_counter()-start,2),'device':device,
           'audio_id':r['audio_id'],'melody_only':r['melody_only'],'source_seconds':r['source_seconds']}
-elif r.get('model','').startswith('cuda-'):
-    loading('Importing official YuE2 CUDA runtime')
+elif r.get('model','').startswith('cuda-') or r.get('model') == 'mps-pytorch':
+    loading('Importing official YuE2 '+('Metal / PyTorch' if r.get('model') == 'mps-pytorch' else 'CUDA')+' runtime')
     from cuda_engine import run,ScoreWriter
     from yue2.protocol import Sampling as CudaSampling
     def prepare_score(pipe,abc):
@@ -354,6 +355,7 @@ else:
                 if r.get('instrumental') and r['cot']!='off' and not abc: abc,_=write_plan(seed)
                 audio,info=pipe(generation_style,generation_lyrics,cot=r['cot'],seed=seed,abc=abc or None,
                     cfg_scale=r['cfg_scale'],semantic_sampling=Sampling(**r['semantic_sampling']),steps=r['steps'])
+            audio_quality.check_and_save(destination,audio,write_wav)
             write_wav(destination/'audio.wav',audio)
             if info.get('abc'): (destination/'score.abc').write_text(info['abc'])
             (destination/'tokens.json').write_text(json.dumps(info['codec']))

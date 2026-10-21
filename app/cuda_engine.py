@@ -17,6 +17,11 @@ from yue2.protocol import SongRequest, token_prefixes, negative_prefix, ABC_STAR
 from yue2.storage import identity
 import song_continuation
 from runtime_platform import external_yue2_root
+from mps_sampling import install_mps_safe_sampling
+
+
+if torch.backends.mps.is_available():
+    install_mps_safe_sampling()
 
 # Windows Torch exposes the FlashAttention operator even when it was not built.
 # Select upstream's supported cuDNN graph path instead of its operator-only auto check.

@@ -53,6 +53,18 @@ class ExternalMpsTest(unittest.TestCase):
         self.assertTrue(is_upstream_torch('cuda-bf16'))
         self.assertFalse(is_upstream_torch('bf16'))
 
+    def test_nonfinite_logits_are_sanitized_in_fp32(self):
+        try:
+            import torch
+            from mps_sampling import safe_mps_logits
+        except ImportError:
+            self.skipTest('torch is installed in the external YuE2 environment')
+        logits = torch.tensor([[float('nan'), float('inf'), -float('inf'), 2]], dtype=torch.bfloat16)
+        repaired = safe_mps_logits(logits)
+        self.assertEqual(repaired.dtype, torch.float32)
+        self.assertTrue(bool(torch.isfinite(repaired).all()))
+        self.assertEqual(repaired.tolist(), [[-10000., 10000., -10000., 2.]])
+
 
 if __name__ == '__main__':
     unittest.main()

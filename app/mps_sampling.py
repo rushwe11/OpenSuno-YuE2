@@ -4,6 +4,11 @@ from functools import wraps
 import torch
 
 
+def mps_available():
+    backend = getattr(getattr(torch, 'backends', None), 'mps', None)
+    return bool(backend and backend.is_available())
+
+
 def safe_mps_logits(logits):
     """Move MPS sampling arithmetic to FP32 CPU and repair non-finite logits."""
     return torch.nan_to_num(logits.float().cpu(), nan=-1.0e4, posinf=1.0e4, neginf=-1.0e4)

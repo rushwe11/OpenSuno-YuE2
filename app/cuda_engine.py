@@ -16,11 +16,12 @@ from yue2.pipeline import SymbolicPlan, SemanticResult, SongResult
 from yue2.protocol import SongRequest, token_prefixes, negative_prefix, ABC_START, ABC_END, CODEC_OFFSET, EOD, VOCAB_SIZE
 from yue2.storage import identity
 import song_continuation
+import audio_quality
 from runtime_platform import external_yue2_root
-from mps_sampling import install_mps_safe_sampling
+from mps_sampling import install_mps_safe_sampling, mps_available
 
 
-if torch.backends.mps.is_available():
+if mps_available():
     install_mps_safe_sampling()
 
 # Windows Torch exposes the FlashAttention operator even when it was not built.
@@ -236,7 +237,7 @@ class Pipeline(YuE2Pipeline):
             project = external_yue2_root(root)
             if project is None:
                 raise RuntimeError('Set OPENSUNO_YUE2_ROOT to the existing YuE2 project with its .venv and models folder.')
-            if not torch.backends.mps.is_available():
+            if not mps_available():
                 raise RuntimeError('The existing YuE2 backend requires Apple Metal / MPS.')
             self.external_project = project
             super().__init__(project/'models/YuE2-3B', project/'models/YuE2-Vae', device='mps',
@@ -288,7 +289,7 @@ class Pipeline(YuE2Pipeline):
         """Release unified-memory allocations before another LoRA/model key loads."""
         super().close()
         gc.collect()
-        if torch.backends.mps.is_available():
+        if mps_available():
             torch.mps.synchronize()
             torch.mps.empty_cache()
 
@@ -346,7 +347,7 @@ def run(root, jobdir, r, cache, report, cancel, save_meta, style, lyrics, start,
             if isinstance(old, Pipeline): old.close()
         for k in [k for k, v in cache.items() if isinstance(v, Pipeline)]: del cache[k]
         gc.collect()
-        if torch.backends.mps.is_available():
+        if mps_available():
             torch.mps.synchronize()
             torch.mps.empty_cache()
         pipe = cache[key] = Pipeline(root, variant, report, cancel, lora=lora, drop_ar_file=drop_ar_file or None, planner=planner)
@@ -399,6 +400,7 @@ def run(root, jobdir, r, cache, report, cancel, save_meta, style, lyrics, start,
             if r.get('instrumental') and r['cot'] != 'off' and not settings['abc']:
                 settings['abc'], _ = write_plan(seed)
             result = pipe(**settings, semantic_sampling=Sampling(**r['semantic_sampling']))
+        audio_quality.check_and_save(destination, result.audio, write_wav)
         write_wav(destination/'audio.wav', result.audio)
         if result.abc: (destination/'score.abc').write_text(result.abc, encoding='utf-8')
         (destination/'tokens.json').write_text(json.dumps(result.semantic.tokens))

@@ -4,6 +4,7 @@ from pathlib import Path
 from runtime_platform import replace_file
 import instrumental
 import cover_arrangement
+import audio_quality
 import vocal_register
 ROOT=Path(__file__).resolve().parents[1]
 MODEL_CACHE=globals().get('MODEL_CACHE',{})
@@ -354,6 +355,7 @@ else:
                 if r.get('instrumental') and r['cot']!='off' and not abc: abc,_=write_plan(seed)
                 audio,info=pipe(generation_style,generation_lyrics,cot=r['cot'],seed=seed,abc=abc or None,
                     cfg_scale=r['cfg_scale'],semantic_sampling=Sampling(**r['semantic_sampling']),steps=r['steps'])
+            audio_quality.check_and_save(destination,audio,write_wav)
             write_wav(destination/'audio.wav',audio)
             if info.get('abc'): (destination/'score.abc').write_text(info['abc'])
             (destination/'tokens.json').write_text(json.dumps(info['codec']))
